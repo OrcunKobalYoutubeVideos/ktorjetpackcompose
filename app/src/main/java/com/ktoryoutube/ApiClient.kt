@@ -1,63 +1,43 @@
 package com.ktoryoutube
 
-import io.ktor.client.HttpClient
-import io.ktor.client.call.body
-import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.client.plugins.DefaultRequest
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.plugins.logging.LogLevel
-import io.ktor.client.plugins.logging.Logger
-import io.ktor.client.plugins.logging.Logging
-import io.ktor.client.plugins.logging.SIMPLE
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
-import io.ktor.serialization.kotlinx.json.json
-import kotlinx.serialization.json.Json
+import com.google.gson.GsonBuilder
+import okhttp3.HttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Response
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.GET
+import java.util.concurrent.TimeUnit
 
-class ApiClient {
+interface ApiEndpoints{
+    @GET("products")
+    suspend fun getProducts() : Response<List<ProductItem>>
+}
 
-    private val client = HttpClient(OkHttp) {
-
-        defaultRequest { url(urlString = "https://fakestoreapi.com/") }
-
-        install(Logging) {
-            logger = Logger.SIMPLE
-            level = LogLevel.ALL
-        }
-
-        install(ContentNegotiation) {
-            json(Json {
-                isLenient = true
-                ignoreUnknownKeys = true
-                prettyPrint = true
-            })
-        }
-
-        install(HttpTimeout) {
-            requestTimeoutMillis = 10000L
-            connectTimeoutMillis = 10000L
-            socketTimeoutMillis = 10000L
-        }
-
-        install(DefaultRequest) {
-            header(HttpHeaders.ContentType, ContentType.Application.Json)
-        }
-
-    }
+class ApiClient(
+    private val apiEndpoints: ApiEndpoints
+) {
 
     suspend fun getProducts(): ApiResponse<List<ProductItem>> {
         return apiRequest {
-            client.get(urlString = "products").body<List<ProductItem>>()
+            apiEndpoints.getProducts()
         }
     }
 
-    private inline fun <T> apiRequest(callBack:() -> T) : ApiResponse<T>{
+    private inline fun <T> apiRequest(callBack:() -> Response<T>) : ApiResponse<T>{
         return try {
-            ApiResponse.Success(data = callBack())
+            val response = callBack()
+            if( response.isSuccessful ){
+                val body = response.body()
+                if(body != null ){
+                    ApiResponse.Success(data = body)
+                }else{
+                    ApiResponse.Error(error = Exception("Empty List"))
+                }
+            }else{
+                ApiResponse.Error(error = Exception("Unknown Error"))
+            }
         }catch (e:Exception){
             ApiResponse.Error(error = e)
         }
@@ -75,6 +55,41 @@ class ApiClient {
         fun onError(block:(Exception)->Unit): ApiResponse<T> {
             if( this is Error ) block(error)
             return this
+        }
+    }
+
+    companion object{
+        operator fun invoke():ApiClient{
+
+            val httpLoggingInterceptor = HttpLoggingInterceptor()
+            httpLoggingInterceptor.level = HttpLoggingInterceptor.Level.BODY
+
+            val okHttpClient = OkHttpClient.Builder()
+                .connectTimeout(10,TimeUnit.SECONDS)
+                .writeTimeout(10,TimeUnit.SECONDS)
+                .readTimeout(10,TimeUnit.SECONDS)
+                .addInterceptor(httpLoggingInterceptor)
+                .build()
+
+            val gson = GsonBuilder()
+                .setLenient()
+                .setPrettyPrinting()
+                .create()
+
+            val httpUrl = HttpUrl.Builder()
+                .host("fakestoreapi.com")
+                .scheme("https")
+                .build()
+
+            val retrofit = Retrofit.Builder()
+                .client(okHttpClient)
+                .baseUrl(httpUrl)
+                .addConverterFactory(GsonConverterFactory.create(gson))
+                .build()
+
+            return ApiClient(
+                apiEndpoints = retrofit.create(ApiEndpoints::class.java)
+            )
         }
     }
 

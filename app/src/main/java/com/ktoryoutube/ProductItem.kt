@@ -1,8 +1,5 @@
 package com.ktoryoutube
 
-import kotlinx.serialization.Serializable
-
-@Serializable
 data class ProductItem(
     val category: String,
     val description: String,
@@ -13,7 +10,6 @@ data class ProductItem(
     val title: String
 ){
 
-    @Serializable
     data class Rating(
         val count: Int,
         val rate: Double
